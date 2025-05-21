@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:14
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    env_file:
+      - ./.env
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=planfix_ai
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: ./Dockerfile.backend
+    restart: unless-stopped
+    volumes:
+      - ./:/app/
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    depends_on:
+      - db
+      - redis
+    env_file:
+      - ./.env
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+
+  celery:
+    build:
+      context: .
+      dockerfile: ./Dockerfile.backend
+    restart: unless-stopped
+    volumes:
+      - ./:/app/
+    depends_on:
+      - db
+      - redis
+    env_file:
+      - ./.env
+    command: celery -A config worker -l INFO
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: ./Dockerfile.backend
+    restart: unless-stopped
+    volumes:
+      - ./:/app/
+    depends_on:
+      - db
+      - redis
+      - celery
+    env_file:
+      - ./.env
+    command: celery -A config beat -l INFO
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ./Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_volume:
+  media_volume:
